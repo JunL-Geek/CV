@@ -53,7 +53,7 @@ class RegionProposalNetwork(nn.Module):
         rois = list()
         roi_indices = list()
         for i in range(n):
-            roi = self.proposal_layer(loc=rpn_locs, score=rpn_scores, anchor=anchor,
+            roi = self.proposal_layer(loc=rpn_locs[i], score=rpn_scores[i], anchor=anchor,
                                       img_size=img_size, scale=scale)
             rois.append(roi)
             batch_index = i * torch.ones((len(roi),))
@@ -124,8 +124,8 @@ def loc2bbox(src_bbox, loc):
     """
 
     :param src_bbox: (38 * 38 * 9, 4)
-    :param loc: (38 * 38, 9 * 4)
-    :return: dst_bbox: (38 * 38, 9 * 4)
+    :param loc: (38 * 38 * 9, 4)
+    :return: dst_bbox: (38 * 38 * 9, 4)
     """
     src_width = torch.unsqueeze(src_bbox[:, 2] - src_bbox[:, 0], -1)
     src_height = torch.unsqueeze(src_bbox[:, 3] - src_bbox[:, 1], -1)
@@ -149,6 +149,7 @@ def loc2bbox(src_bbox, loc):
     dst_bbox[:, 3::4] = crt_y + 0.5 * h
 
     return dst_bbox
+
 
 def normal_init(module, mean, stddev, truncated=False):
     if truncated:
