@@ -3,6 +3,7 @@ import torch
 import torch.nn as nn
 from anchors import generate_anchor_base, _enumerate_shifted_anchor
 import torch.nn.functional as F
+from torchvision.ops import nms
 
 
 class RegionProposalNetwork(nn.Module):
@@ -21,13 +22,13 @@ class RegionProposalNetwork(nn.Module):
         self.conv1 = nn.Conv2d(in_channels, mid_channels, 3, 1, 1)
 
         # regression prediction to roi
-        self.los = nn.Conv2d(mid_channels, n_anchor * 4, 1, 1, 0)
+        self.loc = nn.Conv2d(mid_channels, n_anchor * 4, 1, 1, 0)
 
         # classification whether the roi contain an object
         self.score = nn.Conv2d(mid_channels, n_anchor * 2, 1, 1, 0)
 
         normal_init(self.conv1, 0, 0.01)
-        normal_init(self.los, 0, 0.01)
+        normal_init(self.loc, 0, 0.01)
         normal_init(self.score, 0, 0.01)
 
     def forward(self, x, img_size, scale=1.):
@@ -43,9 +44,9 @@ class RegionProposalNetwork(nn.Module):
         # rpn_scores.shape = (n, h * w * 9, 2)
         rpn_scores = rpn_scores.permute(0, 2, 3, 1).contiguous().view(n, -1, 2)
 
-        rpn_prob = F.softmax(rpn_scores, dim=-1)
-        # rpn_fg_prob.shape = (n, w * h * 9)
-        rpn_fg_prob = rpn_prob[:, :, 1].contiguous().view(n, -1)
+        rpn_softmax_scores = F.softmax(rpn_scores, dim=-1)
+        # rpn_fg_scores.shape = (n, w * h * 9)
+        rpn_fg_scores = rpn_softmax_scores[:, :, 1].contiguous().view(n, -1)
 
         # generate standard prior anchor for each feature map, shape = (h * w * 9, 4)
         anchor = _enumerate_shifted_anchor(np.array(self.anchor_base), self.feat_stride, h, w)
@@ -53,14 +54,15 @@ class RegionProposalNetwork(nn.Module):
         rois = list()
         roi_indices = list()
         for i in range(n):
-            roi = self.proposal_layer(loc=rpn_locs[i], score=rpn_scores[i], anchor=anchor,
+            roi = self.proposal_layer(loc=rpn_locs[i], score=rpn_fg_scores[i], anchor=anchor,
                                       img_size=img_size, scale=scale)
-            rois.append(roi)
+            rois.append(roi.unsqueeze(0))
             batch_index = i * torch.ones((len(roi),))
-            roi_indices.append(batch_index)
+            roi_indices.append(batch_index.unsqueeze(0))
 
-        rois = torch.cat(rois, dim=0)
-        roi_indices = torch.cat(roi_indices, dim=0)
+        rois = torch.cat(rois, dim=0).type_as(x)
+        roi_indices = torch.cat(roi_indices, dim=0).type_as(x)
+        anchor = torch.from_numpy(anchor).unsqueeze(0).float().to(x.device)
 
         return rpn_locs, rpn_scores, rois, roi_indices, anchor
 
@@ -90,7 +92,7 @@ class ProposalCreator():
             n_post_nms = self.n_test_post_nms
 
         # ndarry to tensor
-        anchor = torch.from_numpy(anchor)
+        anchor = torch.from_numpy(anchor).type_as(loc)
 
         roi = loc2bbox(anchor, loc)
 
@@ -113,6 +115,9 @@ class ProposalCreator():
 
         # nms
         keep = nms(roi, score, self.nms_thresh)
+        if len(keep) < n_post_nms:
+            index_extra = np.random.choice(range(len(keep)), size=(n_post_nms-len(keep)), replace=True)
+            keep = torch.cat([keep, keep[index_extra]])
         keep = keep[:n_post_nms]
         roi = roi[keep, :]
         score = score[keep]
@@ -158,3 +163,13 @@ def normal_init(module, mean, stddev, truncated=False):
         module.weight.data.normal_(mean, stddev)
         module.bias.data.zero_()
 
+
+if __name__ == "__main__":
+    rpn = RegionProposalNetwork(in_channels=1024)
+    x = torch.randn(2, 1024, 38, 38)
+    rpn_locs, rpn_scores, rois, ros_indices, anchors = rpn.forward(x, [38, 38])
+    print(rpn_locs.shape)
+    print(rpn_scores.shape)
+    print(rois.shape)
+    print(ros_indices.shape)
+    print(anchors.shape)
