@@ -5,6 +5,7 @@ from rpn import normal_init
 
 class Resnet50RoIHead(nn.Module):
     def __init__(self, n_classes, roi_size, spatial_scale, classifier):
+        super(Resnet50RoIHead, self).__init__()
         self.classifier = classifier
 
         # 对每个类别进行位置预测
@@ -31,11 +32,14 @@ class Resnet50RoIHead(nn.Module):
         if x.is_cuda:
             rois = rois.cuda()
             roi_indices = roi_indices.cuda()
+        rois = torch.flatten(rois, 0, 1)
+        roi_indices = torch.flatten(roi_indices, 0, 1)
 
         # 对rois 进行归一化
         rois_feature_map = torch.zeros_like(rois)
         rois_feature_map[:, [0, 2]] = rois[:, [0, 2]] / img_size[1] * x.size()[3]
         rois_feature_map[:, [1, 3]] = rois[:, [1, 3]] / img_size[0] * x.size()[2]
+        rois_feature_map = torch.cat([roi_indices[:, None], rois_feature_map], dim=1)
 
         # 利用prior anchor 对特征图进行池化
         pool = self.roi(x, rois_feature_map) # shape=(n, c, output_size[0], output_size[1])
