@@ -17,10 +17,10 @@ def bbox_iou(bbox_a, bbox_b):
         raise IndexError
     # shape = (n, k, 2)
     tl = np.maximum(bbox_a[:, None, :2], bbox_b[:, :2])
-    br = np.maximum(bbox_b[:, None, 2:], bbox_b[:, 2:])
+    br = np.minimum(bbox_a[:, None, 2:], bbox_b[:, 2:])
     area_i = np.prod(br-tl, axis=2) * (tl < br).all(axis=2)
-    area_a = np.prod(bbox_a[2:] - bbox_a[:2], axis=1)
-    area_b = np.prod(bbox_b[2:] - bbox_a[:2], axis=1)
+    area_a = np.prod(bbox_a[:, 2:] - bbox_a[:, :2], axis=1)
+    area_b = np.prod(bbox_b[:, 2:] - bbox_b[:, :2], axis=1)
     return area_i / (area_a[:, None] + area_b - area_i) # shape = (n, k)
 
 
@@ -86,7 +86,7 @@ class AnchorTargetCreator(object):
         if len(gt_argmax_ious) > 0:
             labels[gt_argmax_ious] = 1 # 保证每个真实框都对应一个正样本
 
-        n_pos = self.ratio_pos * self.n_samples
+        n_pos = int(self.ratio_pos * self.n_samples)
         pos_index = np.where(labels == 1)[0]
         if len(pos_index) > n_pos:
             exclude_index = np.random.choice(pos_index, len(pos_index) - n_pos, replace=False)
@@ -125,7 +125,7 @@ class ProposalTargetCreator(object):
         else:
             gt_assignment = iou.argmax(axis=1)
             iou_max = iou.max(axis=1)
-            gt_roi_label = label(gt_assignment) + 1
+            gt_roi_label = label[gt_assignment] + 1
 
         pos_index = np.where(iou_max >= self.pos_iou_thresh)[0]
         pos_roi_per_image = int(min(pos_roi_per_image, pos_index.size))
@@ -208,7 +208,7 @@ class FasterRCNNTrainer(nn.Module):
             gt_rpn_loc = torch.Tensor(gt_rpn_loc).type_as(rpn_locs)
             gt_rpn_label = torch.Tensor(gt_rpn_label).type_as(rpn_locs).long()
 
-            rpn_loc_loss = self._fast_rcnn_loc_loss(rpn_loc, gt_rpn_loc, gt_rpn_label)
+            rpn_loc_loss = self._fast_rcnn_loc_loss(rpn_loc, gt_rpn_loc, gt_rpn_label, self.rpn_sigma)
             rpn_cls_loss = F.cross_entropy(rpn_score, gt_rpn_label, ignore_index=-1)
 
             rpn_loc_loss_all += rpn_loc_loss
@@ -219,7 +219,7 @@ class FasterRCNNTrainer(nn.Module):
             sample_rois.append(torch.Tensor(sample_roi).type_as(rpn_locs))
             sample_indices.append(torch.ones(len(sample_roi)).type_as(rpn_locs) * roi_indices[i][0])
             gt_roi_locs.append(torch.Tensor(gt_roi_loc).type_as(rpn_locs))
-            gt_roi_label.append(torch.Tensor(gt_roi_label).type_as(rpn_locs).long())
+            gt_roi_labels.append(torch.Tensor(gt_roi_label).type_as(rpn_locs).long())
 
         # n_sample = 128
         sample_rois = torch.stack(sample_rois, dim=0)   # (n * 128, 4)
@@ -236,10 +236,12 @@ class FasterRCNNTrainer(nn.Module):
             gt_roi_label = gt_roi_labels[i] # (128, 1)
 
             roi_cls_loc = roi_cls_loc.view(n_sample, -1, 4)
-            roi_loc = roi_cls_loc[torch.arange(0, n_sample), gt_roi_label] # (128, 4) 为每一个样本框选取对应的标签的调整参数
+            roi_loc = roi_cls_loc[torch.arange(0, n_sample), gt_roi_label]  # (128, 4) 为每一个样本框选取对应的标签的调整参数
 
             roi_loc_loss = self._fast_rcnn_loc_loss(roi_loc, gt_roi_loc, gt_roi_label.data, self.roi_sigma)
             roi_cls_loss = nn.CrossEntropyLoss()(roi_score, gt_roi_label)
+
+
 
             roi_cls_loss_all += roi_cls_loss
             roi_loc_loss_all += roi_loc_loss
@@ -321,7 +323,7 @@ def get_lr_scheduler(lr_decay_type, lr, min_lr, total_iters, warmup_iters_ratio=
         warmup_total_iters = min(max((warmup_iters_ratio * total_iters),1), 3)
         warmup_lr_start = max(lr * warmup_lr_ratio, 1e-6)
         no_aug_iter = min(max(no_aug_iter_ratio * total_iters, 1), 15)
-        func = partial(yolox_warm_cos_lr, lr, min_lr, warmup_total_iters, warmup_lr_start, no_aug_iter)
+        func = partial(yolox_warm_cos_lr, lr, min_lr, total_iters, warmup_total_iters, warmup_lr_start, no_aug_iter)
     else:
         decay_rate = (min_lr / lr) ** (1 / (step_num-1))
         step_size = total_iters / step_num

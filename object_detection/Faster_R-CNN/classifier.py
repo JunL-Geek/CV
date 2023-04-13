@@ -9,9 +9,9 @@ class Resnet50RoIHead(nn.Module):
         self.classifier = classifier
 
         # 对每个类别进行位置预测
-        self.cls_loc = nn.Linear(2048, n_classes * 4)
+        self.cls_loc = nn.Linear(2048, (n_classes+1) * 4)
         # 对每个类别进行分类回归
-        self.score = nn.Linear(2048, n_classes)
+        self.score = nn.Linear(2048, n_classes+1)
 
         normal_init(self.cls_loc, 0, 0.001)
         normal_init(self.score, 0, 0.01)

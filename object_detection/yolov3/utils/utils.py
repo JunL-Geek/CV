@@ -20,6 +20,14 @@ def get_classes(classes_path):
     class_names = [c.strip() for c in class_names]
     return class_names, len(class_names)
 
+# 获取先验证框
+def get_anchors(anchors_path):
+    with open(anchors_path, encoding='utf-8') as f:
+        anchors = f.readline()
+    anchors = [float(anchor) for anchor in anchors.split(',')]
+    anchors = np.array(anchors).reshape(-1, 2)
+    return anchors, len(anchors)
+
 def get_lr(optimizer):
     for param_group in optimizer.param_groups:
         return param_group['lr']
